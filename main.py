@@ -1,49 +1,127 @@
+import logging
 import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InputFile
-from aiogram.utils import executor
-from aiogram.dispatcher.filters import Command
-from aiogram.dispatcher.middlewares import BaseMiddleware
+from datetime import datetime, timedelta
 
-TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from tinydb import TinyDB, Query
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+db = TinyDB("users.json")
+files_db = TinyDB("files.json")
 
+logging.basicConfig(level=logging.INFO)
+
+#  دکمه بررسی عضویت
+def join_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("عضویت در کانال", url=f"https://t.me/{str(CHANNEL_ID).replace('-100', '')}"))
+    kb.add(InlineKeyboardButton("بررسی عضویت", callback_data="check_join"))
+    return kb
+
+#  چک عضویت کاربر
 async def is_member(user_id):
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ['member', 'administrator', 'creator']
+        return member.status in ["member", "creator", "administrator"]
     except:
         return False
 
-@dp.message_handler(content_types=types.ContentType.ANY)
-async def handle_upload(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply("شما دسترسی ندارید.")
-        return
-    file_id = None
-    if message.photo:
-        file_id = message.photo[-1].file_id
-    elif message.video:
-        file_id = message.video.file_id
-    if file_id:
-        await message.reply(f"فایل ذخیره شد. لینک مستقیم:\nhttps://t.me/{(await bot.get_me()).username}?start={file_id}")
+# پنل مدیریت
+def admin_panel():
+    kb = InlineKeyboardMarkup()
+    kb.add(
+        InlineKeyboardButton("آمار کاربران", callback_data="stats"),
+        InlineKeyboardButton("فایل‌های آپلودشده", callback_data="list_files")
+    )
+    return kb
 
-@dp.message_handler(Command("start"))
-async def handle_start(message: types.Message):
-    args = message.get_args()
-    if args:
-        if await is_member(message.from_user.id):
-            await bot.send_message(message.chat.id, "در حال ارسال فایل...")
-            await bot.send_chat_action(message.chat.id, "upload_photo")
-            await bot.send_photo(message.chat.id, args)
-        else:
-            await message.reply("برای دریافت فایل باید عضو کانال شوید.")
+# استارت
+@dp.message_handler(commands=["start"])
+async def start_cmd(message: types.Message):
+    user_id = message.from_user.id
+    now = datetime.utcnow().isoformat()
+    if not db.contains(Query().id == user_id):
+        db.insert({"id": user_id, "time": now})
+    if not await is_member(user_id):
+        await message.answer("برای استفاده از ربات ابتدا عضو کانال شوید:", reply_markup=join_keyboard())
+        return
+    if user_id == ADMIN_ID:
+        await message.answer("خوش آمدید به پنل مدیریت", reply_markup=admin_panel())
     else:
-        await message.reply("خوش آمدید!")
+        await message.answer("فایل خود را ارسال کنید تا لینک دریافت کنید.")
+
+# بررسی عضویت مجدد
+@dp.callback_query_handler(lambda c: c.data == "check_join")
+async def check_join(call: types.CallbackQuery):
+    if await is_member(call.from_user.id):
+        await call.message.edit_text("عضویت تایید شد. حالا فایل خود را ارسال کنید.")
+    else:
+        await call.answer("هنوز عضو نیستید!", show_alert=True)
+
+# دریافت فایل
+@dp.message_handler(content_types=types.ContentType.DOCUMENT)
+async def handle_doc(message: types.Message):
+    if not await is_member(message.from_user.id):
+        await message.answer("برای استفاده از ربات ابتدا عضو کانال شوید:", reply_markup=join_keyboard())
+        return
+    file = message.document
+    file_id = file.file_id
+    file_name = file.file_name
+    files_db.insert({
+        "file_id": file_id,
+        "name": file_name,
+        "downloads": 0,
+        "uploader": message.from_user.id,
+        "time": datetime.utcnow().isoformat()
+    })
+    link = f"https://t.me/{(await bot.get_me()).username}?start={file_id}"
+    await message.answer(f"فایل ذخیره شد. لینک اشتراک‌گذاری:\n{link}")
+
+# دانلود فایل از لینک
+@dp.message_handler(lambda m: m.text.startswith("/start ") and len(m.text.split()) == 2)
+async def get_file_from_link(message: types.Message):
+    file_id = message.text.split()[1]
+    result = files_db.search(Query().file_id == file_id)
+    if result:
+        files_db.update({"downloads": result[0]["downloads"] + 1}, Query().file_id == file_id)
+        await bot.send_document(message.chat.id, file_id, caption=f"نام فایل: {result[0]['name']}")
+    else:
+        await message.answer("فایل موردنظر یافت نشد.")
+
+# لیست فایل‌های ادمین
+@dp.callback_query_handler(lambda c: c.data == "list_files")
+async def show_files(call: types.CallbackQuery):
+    files = files_db.all()
+    if not files:
+        await call.message.answer("هیچ فایلی آپلود نشده.")
+    else:
+        text = "\n\n".join([f"{f['name']} - دانلود: {f['downloads']}" for f in files])
+        await call.message.answer(f"فایل‌ها:\n{text}")
+
+# آمار کاربران
+@dp.callback_query_handler(lambda c: c.data == "stats")
+async def show_stats(call: types.CallbackQuery):
+    users = db.all()
+    now = datetime.utcnow()
+    d24 = len([u for u in users if datetime.fromisoformat(u['time']) >= now - timedelta(days=1)])
+    d7 = len([u for u in users if datetime.fromisoformat(u['time']) >= now - timedelta(days=7)])
+    d30 = len([u for u in users if datetime.fromisoformat(u['time']) >= now - timedelta(days=30)])
+    await call.message.answer(
+        f"آمار کاربران:\n"
+        f"24 ساعت اخیر: {d24}\n"
+        f"7 روز اخیر: {d7}\n"
+        f"30 روز اخیر: {d30}\n"
+        f"کل: {len(users)}"
+    )
 
 if __name__ == "__main__":
+    from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
