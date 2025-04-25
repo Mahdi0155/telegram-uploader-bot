@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types
@@ -7,28 +6,26 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from tinydb import TinyDB, Query
 
-# مقادیر موردنیاز
-BOT_TOKEN = "7615458928:AAG7s555TJTf9HO3gjppl4rRly-UtH2WAnc"
+# تنظیمات
+BOT_TOKEN = "7615458928:AAHYe7qSpmAbI4hkCwUk19_0kONm5XJ0TUM"
 ADMIN_ID = 6387942633  # آی‌دی عددی ادمین
-CHANNEL_USERNAME = "hottof"  # بدون @
+CHANNEL_USERNAME = "hottof"  # فقط نام بدون @
 
+# راه‌اندازی
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
-
+dp = Dispatcher(bot, storage=MemoryStorage())
 db = TinyDB("users.json")
 files_db = TinyDB("files.json")
-
 logging.basicConfig(level=logging.INFO)
 
-# دکمه بررسی عضویت
+# کیبورد عضویت
 def join_keyboard():
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("عضویت در کانال", url=f"https://t.me/{CHANNEL_USERNAME}"))
     kb.add(InlineKeyboardButton("بررسی عضویت", callback_data="check_join"))
     return kb
 
-# چک عضویت کاربر
+# بررسی عضویت
 async def is_member(user_id):
     try:
         member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
@@ -36,7 +33,7 @@ async def is_member(user_id):
     except:
         return False
 
-# پنل مدیریت
+# پنل ادمین
 def admin_panel():
     kb = InlineKeyboardMarkup()
     kb.add(
@@ -45,7 +42,7 @@ def admin_panel():
     )
     return kb
 
-# استارت
+# فرمان /start
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
@@ -55,15 +52,15 @@ async def start_cmd(message: types.Message):
         db.insert({"id": user_id, "time": now})
 
     if not await is_member(user_id):
-        await message.answer("برای استفاده از ربات ابتدا عضو کانال شوید:", reply_markup=join_keyboard())
+        await message.answer("لطفاً اول عضو کانال شوید:", reply_markup=join_keyboard())
         return
 
     if user_id == ADMIN_ID:
         await message.answer("خوش آمدید به پنل مدیریت", reply_markup=admin_panel())
     else:
-        await message.answer("فایل خود را ارسال کنید تا لینک دریافت کنید.")
+        await message.answer("لطفاً فایل خود را ارسال کنید:")
 
-# بررسی عضویت مجدد
+# بررسی عضویت
 @dp.callback_query_handler(lambda c: c.data == "check_join")
 async def check_join(call: types.CallbackQuery):
     if await is_member(call.from_user.id):
@@ -71,11 +68,11 @@ async def check_join(call: types.CallbackQuery):
     else:
         await call.answer("هنوز عضو نیستید!", show_alert=True)
 
-# دریافت فایل
+# گرفتن فایل از کاربر
 @dp.message_handler(content_types=types.ContentType.DOCUMENT)
 async def handle_doc(message: types.Message):
     if not await is_member(message.from_user.id):
-        await message.answer("برای استفاده از ربات ابتدا عضو کانال شوید:", reply_markup=join_keyboard())
+        await message.answer("لطفاً ابتدا عضو کانال شوید.", reply_markup=join_keyboard())
         return
 
     file = message.document
@@ -92,28 +89,42 @@ async def handle_doc(message: types.Message):
 
     bot_username = (await bot.get_me()).username
     link = f"https://t.me/{bot_username}?start={file_id}"
-    await message.answer(f"فایل ذخیره شد. لینک اشتراک‌گذاری:\n{link}")
+    await message.answer(f"فایل ذخیره شد!\nلینک اشتراک‌گذاری:\n{link}")
 
-# دریافت فایل از طریق لینک
+# باز کردن فایل از لینک
 @dp.message_handler(lambda m: m.text.startswith("/start ") and len(m.text.split()) == 2)
 async def get_file_from_link(message: types.Message):
     file_id = message.text.split()[1]
+
+    if not await is_member(message.from_user.id):
+        await message.answer("اول عضو کانال شوید:", reply_markup=join_keyboard())
+        return
+
     result = files_db.search(Query().file_id == file_id)
     if result:
         files_db.update({"downloads": result[0]["downloads"] + 1}, Query().file_id == file_id)
         await bot.send_document(message.chat.id, file_id, caption=f"نام فایل: {result[0]['name']}")
     else:
-        await message.answer("فایل موردنظر یافت نشد.")
+        await message.answer("فایل یافت نشد.")
 
-# نمایش فایل‌ها
+# لیست فایل‌ها برای ادمین
 @dp.callback_query_handler(lambda c: c.data == "list_files")
 async def show_files(call: types.CallbackQuery):
+    bot_username = (await bot.get_me()).username
     files = files_db.all()
+
     if not files:
         await call.message.answer("هیچ فایلی آپلود نشده.")
-    else:
-        text = "\n\n".join([f"{f['name']} - دانلود: {f['downloads']}" for f in files])
-        await call.message.answer(f"فایل‌ها:\n{text}")
+        return
+
+    for f in files:
+        link = f"https://t.me/{bot_username}?start={f['file_id']}"
+        text = (
+            f"نام فایل: {f['name']}\n"
+            f"تعداد دانلود: {f['downloads']}\n"
+            f"لینک مستقیم:\n{link}"
+        )
+        await call.message.answer(text)
 
 # آمار کاربران
 @dp.callback_query_handler(lambda c: c.data == "stats")
@@ -131,6 +142,7 @@ async def show_stats(call: types.CallbackQuery):
         f"کل: {len(users)}"
     )
 
+# اجرای ربات
 if __name__ == "__main__":
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
