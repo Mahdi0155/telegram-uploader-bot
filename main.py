@@ -9,7 +9,7 @@ from tinydb import TinyDB, Query
 
 # مقادیر موردنیاز
 BOT_TOKEN = "7615458928:AAHYe7qSpmAbI4hkCwUk19_0kONm5XJ0TUM"
-ADMIN_ID = "6387942633"  # آی‌دی عددی ادمین
+ADMIN_ID = 6387942633  # آی‌دی عددی ادمین
 CHANNEL_USERNAME = "hottof"  # بدون @
 
 bot = Bot(token=BOT_TOKEN)
