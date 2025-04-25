@@ -1,2 +1,2 @@
-python-telegram-bot==20.3
-flask
+aiogram==3.4.1
+python-dotenv
