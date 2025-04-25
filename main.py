@@ -8,7 +8,7 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from tinydb import TinyDB, Query
 
 # مقادیر موردنیاز
-BOT_TOKEN = "7615458928:AAHYe7qSpmAbI4hkCwUk19_0kONm5XJ0TUM"
+BOT_TOKEN = "7615458928:AAG7s555TJTf9HO3gjppl4rRly-UtH2WAnc"
 ADMIN_ID = 6387942633  # آی‌دی عددی ادمین
 CHANNEL_USERNAME = "hottof"  # بدون @
 
